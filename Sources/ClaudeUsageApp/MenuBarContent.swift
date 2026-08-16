@@ -129,97 +129,40 @@ struct MenuBarContent: View {
     }
 }
 
-/// 選單列標題：一個小環形量表＋百分比數字，弧長對應**已使用**比例——跟 app icon、桌面
-/// widget（`UsageWidgetView.RingGauge`）同一套視覺語言，讓三處讀起來是同一個記號。
-/// 光看一個孤零零的「13%」看不出是哪個視窗、也看不出是用掉還是剩下，環本身把「這是一個
-/// 用量讀數、而且是已使用比例」這件事一併帶出來，不用等使用者點開下拉選單才看到
-/// 「5 小時已用：13%」這句話。
+/// 選單列標題：純文字，`「5h 33%」`——window 縮寫＋**已使用**百分比，跟下拉選單裡
+/// 「5 小時已用：33%」同一個量，避免同一個視窗在選單列與下拉選單顯示互相矛盾的數字
+/// （例如選單列說 93%、下拉選單說 7%）。光看一個孤零零的「28%」看不出是哪個視窗、也看
+/// 不出是用掉還是剩下，因此一律帶上 `5h` 這個窗口縮寫。
+///
+/// 這裡不再嘗試畫環形量表：`MenuBarExtra` 的 label 只可靠支援 `Text`／`Image`，
+/// 先前用 `ImageRenderer` 把環點陣化成 `NSImage` 勉強繞過這個限制，但環本身是為桌面
+/// widget 的 ~70pt 尺寸設計的 270° 弧形，縮到選單列的 ~16pt、又只能用單色 template
+/// image 呈現時，看起來只是一段沒有意義的弧、缺口還在底部，不像任何比例讀數。純文字
+/// 標籤才是選單列這個尺度下唯一讀得懂的呈現方式。
 ///
 /// **色彩不可靠，不用來承載意義**：`MenuBarExtra` 的 label 內容在選單列裡對彩色前景
 /// 不生效——這不是憑空假設，是 Apple Developer Forums thread 738716
 /// （https://developer.apple.com/forums/thread/738716）裡其他開發者的實測回報：對
 /// label 套用 `.foregroundStyle(.red)` / `Image.renderingMode(.original)`，選單列
 /// 仍舊只顯示單色，跟一般視窗裡的行為不同。這裡因此完全不引入嚴重度顏色（`.green`／
-/// `.orange`／`.red`，即使桌面 widget 在 `.fullColor` 模式下有這層加強），全程只用
-/// `.primary`／`.secondary`／`.opacity` 這些語意色階與透明度，弧長本身才是唯一訊號。
+/// `.orange`／`.red`，即使桌面 widget 在 `.fullColor` 模式下有這層加強），只用
+/// `.opacity` 表示凍結狀態，弧長已經不存在，數字本身才是唯一訊號。
 struct MenuBarLabel: View {
     let coordinator: UsageCoordinator
 
-    /// 已經點陣化的環形量表。`body` 每次 coordinator 發佈都會重新求值，但這張圖只有在
-    /// `imageKey`（見下方）真的變動時才重畫——見 `.onChange` 那行。
-    @State private var renderedRingImage: NSImage?
-
     var body: some View {
-        HStack(spacing: 4) {
-            ringImageView
-            if let session {
-                Text("\(Int(session.usedPercent.rounded()))%")
-                    .opacity(isFrozen ? 0.5 : 1)
-            }
-        }
-        // `initial: true`：View 第一次出現時 `onChange` 不會平白略過，一定會先畫一次，
-        // 不必額外靠 `.onAppear` 重複一套邏輯。之後只有 `imageKey` 真的改變（四捨五入後
-        // 的百分比、凍結旗標、或畫布像素尺寸其中之一變了）才會重新呼叫 `ImageRenderer`——
-        // 不是每次 body 求值（coordinator 15 秒發佈一次，但多半數字不會四捨五入後改變）
-        // 都重畫，避免離譜的重複點陣化成本。
-        .onChange(of: imageKey, initial: true) {
-            renderedRingImage = Self.renderRingImage(key: imageKey)
-        }
+        Text(labelText)
+            .opacity(isFrozen ? 0.5 : 1)
     }
 
-    /// `MenuBarExtra` 的 label 只可靠支援 `Text`／`Image`——任意 SwiftUI view（`Circle`
-    /// 疊 `trim`／`stroke` 這種畫圖 primitive）常被直接吃掉、什麼都不畫，這正是這次
-    /// bug 的成因：`RingGaugeGlyph` 編譯得過、單元測試看不出問題，選單列上卻是空的。
-    /// 修法是把 `RingGaugeGlyph` 透過 `ImageRenderer` 點陣化成 `NSImage` 再餵給
-    /// `Image(nsImage:)`——`Image` 是 label 保證支援的型別。畫面還沒點陣化出第一張圖前
-    /// （理論上只有極短暫的第一個 frame），用同尺寸的透明色塊占位，避免版面跳動。
-    @ViewBuilder
-    private var ringImageView: some View {
-        if let renderedRingImage {
-            Image(nsImage: renderedRingImage)
-                .frame(width: diameter, height: diameter)
-        } else {
-            Color.clear.frame(width: diameter, height: diameter)
-        }
-    }
-
-    /// 決定要不要重畫點陣圖的完整依據——刻意只放「會影響畫出來的像素」的東西：
-    /// 四捨五入後的百分比（不是連續的 `usedPercent`，因為畫面上的弧長本來就只精細到
-    /// 整數百分比，且要跟旁邊 `Text` 顯示的數字用同一個四捨五入結果，避免環跟數字兩邊
-    /// 各自四捨五入出現肉眼看得出的不一致）、凍結旗標、以及畫布的點尺寸／螢幕縮放
-    /// （decides pixel size）。`nil` 表示「沒有 session 視窗」，跟「有 session 但值是
-    /// 0」（`roundedPercent == 0`）刻意分成兩種不同的 key，讓 `renderRingImage` 能各自
-    /// 畫出「空 track」跟「track + 一段長度為 0 的 value 弧（視覺上跟空 track 幾乎相同，
-    /// 但語意上是不同狀態，由旁邊有沒有 `Text` 來區分）」。
-    private var imageKey: RingImageKey {
-        RingImageKey(
-            roundedPercent: session.map { Int($0.usedPercent.rounded()) },
-            isFrozen: isFrozen,
-            diameter: diameter,
-            lineWidth: lineWidth,
-            scale: backingScale
-        )
-    }
-
-    /// 把凍結時的淡化直接烤進點陣圖的 alpha channel，不依賴事後對 `Image(nsImage:)`
-    /// 套用 `.opacity()` modifier——`MenuBarExtra` 的 label 對「事後套用的 view
-    /// modifier」有沒有可靠生效本來就是這次 bug 的源頭，沒有理由假設 `.opacity()`
-    /// 套在 `Image` 上就一定沒事。烤進 bitmap 之後，`isTemplate = true` 這條路徑上
-    /// alpha 本來就是 template image 的遮罩強度，淡化直接對應「這塊遮罩比較透明」，
-    /// 是 AppKit 保證支援的行為，不是賭 SwiftUI label 的 modifier 有沒有生效。
-    @MainActor
-    private static func renderRingImage(key: RingImageKey) -> NSImage? {
-        let usedPercent = key.roundedPercent.map(Double.init)
-        let glyph = RingGaugeGlyph(usedPercent: usedPercent, diameter: key.diameter, lineWidth: key.lineWidth)
-            .opacity(key.isFrozen ? 0.5 : 1)
-        let renderer = ImageRenderer(content: glyph)
-        renderer.scale = key.scale
-        guard let nsImage = renderer.nsImage else { return nil }
-        // 標成 template image，讓 macOS 依淺色／深色選單列與 highlighted 狀態自動套色，
-        // 跟桌面 widget 靠色彩傳意義的做法不同——選單列上色相不可靠（見型別文件註解），
-        // 弧長才是唯一訊號，template image 正好把色相這件事整個交給系統決定。
-        nsImage.isTemplate = true
-        return nsImage
+    /// `session == nil`（沒有 session 視窗）顯示 em-dash，不能顯示一個編出來的
+    /// `0%`——那會被誤讀成「已用 0%」這個具體讀數。`usedPercent` 真的是 `0` 時
+    /// （合法的「尚未使用」讀數）則正常顯示 `0%`，靠「有沒有 `session`」而不是
+    /// 「數值是不是 0」來分辨這兩種狀態，跟桌面 widget `RingGauge` 中心文字的
+    /// `window.map { ... } ?? "—"` 是同一個分界。
+    private var labelText: String {
+        guard let session else { return "5h —" }
+        return "5h \(Int(session.usedPercent.rounded()))%"
     }
 
     /// 選單列反映的是 5 小時 session 視窗——唯一「現在該做什麼」有實際意義的數字；
@@ -232,88 +175,8 @@ struct MenuBarLabel: View {
     /// `.interpolated` 仍是本機即時外插出來的數字，不該被一起悶掉。跟桌面 widget 的
     /// `confidenceCaption`（`.estimated` → 「已凍結」）用同一個分界，避免選單列與
     /// widget 兩邊對「這是不是舊數字」給出不同答案。用淡化透明度表示，不是顏色——
-    /// alpha 是形狀本身的一部分，不受「色相在選單列可能被丟棄」這件事影響。
+    /// 選單列上色相不可靠（見型別文件註解），只有 alpha 是保證生效的呈現方式。
     private var isFrozen: Bool {
         session?.confidence == .estimated
-    }
-
-    /// 選單列高度隨機種不同（帶瀏海機型的選單列比一般機型高），從系統即時讀取、
-    /// 不寫死；扣掉一點內距，避免環貼滿到跟旁邊的選單列圖示黏在一起或被系統裁掉一圈。
-    private var diameter: CGFloat {
-        let thickness = NSStatusBar.system.thickness
-        return max(10, thickness - 6)
-    }
-
-    /// 粗細跟直徑成比例：直徑小時筆畫也跟著細，但設下限，避免小尺寸下細到看不清楚
-    /// 這是一圈弧而不是一個點。
-    private var lineWidth: CGFloat {
-        max(1.5, diameter * 0.18)
-    }
-
-    /// 點陣化用的縮放係數——從當前螢幕的 backing scale factor 讀，不寫死 `2`：
-    /// 非 Retina 外接螢幕是 `1`，一般內建螢幕是 `2`，寫死會在非 Retina 螢幕上算出用不到
-    /// 的多餘像素、或反過來在更高密度螢幕上不夠銳利。`NSScreen.main` 理論上不該是
-    /// `nil`（選單列 app 執行中必然有主螢幕），這裡的 `?? 2` 純粹是防禦性下限，不是
-    /// 主要取值路徑。
-    private var backingScale: CGFloat {
-        NSScreen.main?.backingScaleFactor ?? 2
-    }
-}
-
-/// 決定 `MenuBarLabel.renderedRingImage` 要不要重畫的完整依據——只放「會影響畫出來的
-/// 像素」的欄位，讓 `.onChange(of:)` 能準確判斷「這次 coordinator 發佈有沒有真的動到
-/// 畫面」，而不是每次 body 求值都無條件重跑 `ImageRenderer`。
-private struct RingImageKey: Equatable {
-    let roundedPercent: Int?
-    let isFrozen: Bool
-    let diameter: CGFloat
-    let lineWidth: CGFloat
-    let scale: CGFloat
-}
-
-/// 270° 弧形量表，缺口置中於底部——幾何常數（`sweepFraction`／`startRotation`）直接
-/// 複製自桌面 widget 的 `UsageWidgetView.RingGauge`（該型別是 `UsageWidget` target
-/// 內的 `private` 型別，且兩個 target 沒有共用的 UI 模組可以匯入，因此這裡刻意重寫
-/// 同一套幾何常數，而不是改動 `UsageWidget` target 把它公開出來——後者超出本次改動
-/// 範圍）。務必保持兩邊角度系統一致，這樣 app icon、widget、選單列才會讀起來是同一個
-/// 記號，而不是三種不同的弧形語言。
-///
-/// `usedPercent == nil` 時只畫空 track、不畫 value 弧，代表「沒有 session 視窗」；
-/// `usedPercent == 0` 時仍然呼叫 `trim(from:0, to:0)`（等於不畫出可見弧長，視覺上
-/// 跟空 track 幾乎相同）——這兩種情況單靠環本身無法分辨，刻意如此：分辨兩者的責任
-/// 交給 `MenuBarLabel.body`，只有「有 session」才會在環旁邊多畫一個百分比數字，
-/// 「沒有 session」則完全不畫數字。「有沒有數字」才是這兩種狀態唯一的區分依據，
-/// 避免環本身用一個以假亂真的近似弧長來暗示一個並不存在的讀數。
-private struct RingGaugeGlyph: View {
-    let usedPercent: Double?
-    let diameter: CGFloat
-    let lineWidth: CGFloat
-
-    private static let sweepFraction = 0.75
-    private static let startRotation = Angle.degrees(135)
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .trim(from: 0, to: Self.sweepFraction)
-                .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .foregroundStyle(.secondary)
-                .rotationEffect(Self.startRotation)
-
-            if let usedPercent {
-                Circle()
-                    .trim(from: 0, to: Self.sweepFraction * usedFraction(usedPercent))
-                    .stroke(style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                    .foregroundStyle(.primary)
-                    .rotationEffect(Self.startRotation)
-            }
-        }
-        .frame(width: diameter, height: diameter)
-    }
-
-    /// 防止 usedPercent 若脫離 0...100（不該發生，但資料是跨行程讀入的）把 trim
-    /// 餵進非法範圍——跟 `UsageWidgetView.RingGauge.usedFraction` 同樣的防線。
-    private func usedFraction(_ usedPercent: Double) -> Double {
-        max(0, min(1, usedPercent / 100))
     }
 }
