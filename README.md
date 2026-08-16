@@ -14,13 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/echoulen/claude-usage-widget/main/i
 
 腳本會從原始碼建置後裝到 `/Applications` 並啟動。第一次會出現三個系統對話框，都按同意：建立本機簽章憑證、讀取 Claude Code 的登入憑證、寫入小工具資料。
 
-**建議加上 `--login-item`：**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/echoulen/claude-usage-widget/main/install.sh | bash -s -- --login-item
-```
-
-不加的話，app 不會隨系統啟動 —— **重開機或登出之後它就停了**，而桌面小工具會繼續顯示最後一次的數字（標「已凍結」），看起來像還在運作。
+安裝會一併設定隨系統登入自動啟動 —— 這是常駐監看工具該有的行為。不想要的話加 `--no-login-item`，但要知道代價：app 不會隨系統啟動，**重開機或登出之後它就停了**，而桌面小工具會繼續顯示最後一次的數字（標「已凍結」），看起來像還在運作。
 
 其他選項見 `--help`。
 

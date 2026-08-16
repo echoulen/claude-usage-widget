@@ -37,7 +37,7 @@ SIGNING_KEYCHAIN="${HOME}/Library/Keychains/login.keychain-db"
 
 PREFIX="/Applications"
 DO_LAUNCH=1
-DO_LOGIN_ITEM=0
+DO_LOGIN_ITEM=1
 DO_CLEAN_DERIVED_DATA=0
 DO_UNINSTALL=0
 DO_SIGNING_IDENTITY=1
@@ -71,8 +71,10 @@ install.sh — 從原始碼建置並安裝 ${APP_DISPLAY_NAME}
 選項：
   --prefix DIR           安裝目的地（預設：/Applications）
   --no-launch            安裝完成後不要自動啟動 app
-  --login-item           安裝 LaunchAgent，讓 app 隨系統登入自動啟動
-                          （預設不會安裝；此為 opt-in）
+  --login-item           安裝 LaunchAgent，讓 app 隨系統登入自動啟動（預設行為）
+  --no-login-item        不安裝 LaunchAgent。注意：app 不會隨系統啟動，重開機或
+                         登出後就停止運作，而桌面小工具仍會顯示最後一次的數字
+                         （標示為已凍結），看起來像還在運作
   --clean-derived-data    清除這個專案在 Xcode DerivedData 底下的殘留目錄
   --no-signing-identity   不要建立/使用本機自簽憑證，改用 ad-hoc 簽章
                           （每次重新建置都要重新授權 Keychain／個人資料夾等
@@ -125,6 +127,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --login-item)
       DO_LOGIN_ITEM=1
+      shift
+      ;;
+    --no-login-item)
+      DO_LOGIN_ITEM=0
       shift
       ;;
     --clean-derived-data)
@@ -613,7 +619,9 @@ main() {
   if [[ "${DO_LOGIN_ITEM}" -eq 1 ]]; then
     setup_login_item
   else
-    info "提示：加上 --login-item 可以讓 ${APP_DISPLAY_NAME} 在登入時自動啟動（預設不會安裝）。"
+    warn "已依 --no-login-item 略過 LaunchAgent。${APP_DISPLAY_NAME} 不會隨系統啟動——"
+    warn "重開機或登出後它就停止運作，但桌面小工具仍會顯示最後一次的數字（標示為"
+    warn "已凍結），看起來像還在運作。之後想改回來，重跑安裝即可。"
   fi
 
   if [[ "${DO_LAUNCH}" -eq 1 ]]; then
