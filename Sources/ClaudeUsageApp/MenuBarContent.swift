@@ -155,20 +155,25 @@ struct MenuBarLabel: View {
             .opacity(isFrozen ? 0.5 : 1)
     }
 
-    /// `session == nil`（沒有 session 視窗）顯示 em-dash，不能顯示一個編出來的
-    /// `0%`——那會被誤讀成「已用 0%」這個具體讀數。`usedPercent` 真的是 `0` 時
-    /// （合法的「尚未使用」讀數）則正常顯示 `0%`，靠「有沒有 `session`」而不是
+    /// 兩個視窗都顯示，以中點分隔。視窗為 `nil` 時該側顯示 em-dash，不能顯示一個
+    /// 編出來的 `0%`——那會被誤讀成「已用 0%」這個具體讀數。`usedPercent` 真的是
+    /// `0` 時（合法的「尚未使用」讀數）則正常顯示 `0%`，靠「有沒有這個視窗」而不是
     /// 「數值是不是 0」來分辨這兩種狀態，跟桌面 widget `RingGauge` 中心文字的
     /// `window.map { ... } ?? "—"` 是同一個分界。
     private var labelText: String {
-        guard let session else { return "5h —" }
-        return "5h \(Int(session.usedPercent.rounded()))%"
+        "5h \(format(session)) · 7d \(format(weekly))"
     }
 
-    /// 選單列反映的是 5 小時 session 視窗——唯一「現在該做什麼」有實際意義的數字；
-    /// 本週視窗仍只在下拉選單裡（見上方 `MenuBarContent.body`）。
+    private func format(_ window: SnapshotWindow?) -> String {
+        window.map { "\(Int($0.usedPercent.rounded()))%" } ?? "—"
+    }
+
     private var session: SnapshotWindow? {
         coordinator.snapshot?.session
+    }
+
+    private var weekly: SnapshotWindow? {
+        coordinator.snapshot?.weekly
     }
 
     /// 只有「已凍結」（`Confidence.estimated`，見該 case 的文件註解）才算凍結——
@@ -176,7 +181,9 @@ struct MenuBarLabel: View {
     /// `confidenceCaption`（`.estimated` → 「已凍結」）用同一個分界，避免選單列與
     /// widget 兩邊對「這是不是舊數字」給出不同答案。用淡化透明度表示，不是顏色——
     /// 選單列上色相不可靠（見型別文件註解），只有 alpha 是保證生效的呈現方式。
+    /// 任一視窗凍結就淡化整行——兩個數字並列時只淡其中一個會看起來像渲染壞掉，
+    /// 而「這排數字現在不能當即時看」本來就是整體性的判斷。
     private var isFrozen: Bool {
-        session?.confidence == .estimated
+        session?.confidence == .estimated || weekly?.confidence == .estimated
     }
 }
