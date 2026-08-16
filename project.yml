@@ -14,8 +14,8 @@ settings:
     CODE_SIGN_IDENTITY: "ClaudeUsage Local Signing"
     CODE_SIGN_STYLE: Manual
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "2"
 
 targets:
   ClaudeUsage:
@@ -34,6 +34,11 @@ targets:
       properties:
         CFBundleDisplayName: Claude Usage
         LSUIElement: true
+        # 用 info: 產生 plist 時，settings 裡的 MARKETING_VERSION 不會自動流進來，
+        # 版本會凍在預設的 1.0/1。macOS 依 bundle 版本判斷小工具 metadata
+        # （icon、說明文字）快取要不要失效，凍住就永遠顯示第一次快取的內容。
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.echoulen.ClaudeUsage
@@ -54,6 +59,9 @@ targets:
       path: Sources/UsageWidget/Info.plist
       properties:
         CFBundleDisplayName: Claude Usage
+        # 同上：extension 的版本也必須跟著動，否則圖庫的 metadata 不會刷新。
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:

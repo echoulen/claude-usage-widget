@@ -25,6 +25,7 @@ LAUNCH_AGENT_PLIST="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
 # host app 是把 snapshot.json 直接寫進 widget 自己的 sandbox container。
 WIDGET_CONTAINER="${HOME}/Library/Containers/${WIDGET_BUNDLE_ID}"
 DERIVED_DATA_ROOT="${HOME}/Library/Developer/Xcode/DerivedData"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 # 此 app 一律用 CODE_SIGN_IDENTITY 簽章。ad-hoc 簽章（"-"）的身分是從二進位檔
 # 內容算出來的雜湊，每次重新建置都不一樣；macOS 把 Keychain 的「永遠允許」與
@@ -470,6 +471,16 @@ install_app() {
   fi
 
   info "安裝驗證通過。"
+
+  # 建置會在 build/ 留下一份完整的 .app，而 macOS 只要看到 app bundle 就會把它
+  # （連同裡面的 widget extension）註冊進 LaunchServices。結果是同一個 bundle id
+  # 有兩份註冊互相競爭，實測 pluginkit 會挑中建置輸出那份，於是小工具圖庫顯示的
+  # icon 與說明來自 build/ 而非 /Applications，看起來就像「圖示一直沒更新」。
+  # 安裝完成後主動取消註冊並移除建置輸出，讓系統只認得 /Applications 那一份。
+  if [[ -n "${BUILT_APP:-}" && -e "${BUILT_APP}" ]]; then
+    "${LSREGISTER}" -u "${BUILT_APP}" >/dev/null 2>&1 || true
+  fi
+  "${LSREGISTER}" -f "${TARGET_APP}" >/dev/null 2>&1 || true
 }
 
 # ---------------------------------------------------------------------------
