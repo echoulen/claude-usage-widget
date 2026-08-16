@@ -52,3 +52,7 @@ macOS 預設會把桌面小工具調暗成灰階。這是系統設定，不是 a
 一般 app 與小工具之間是靠 App Group 共享容器傳資料，這個專案不行 —— 實測發現在 ad-hoc 簽章（無付費 Apple Developer team）下，被 sandbox 的小工具對 App Group 容器的讀、列目錄、寫入全部被系統拒絕（`NSCocoaErrorDomain` 257 / 513）。改用付費 team 也救不回來：`xcodebuild` 在命令列從未真正配出 App Group 的 provisioning profile，而沒有 profile 的 extension 會卡在 `_libsecinit_appsandbox` 被系統強制終止。
 
 可行的做法是寫進**小工具自己的 sandbox 容器**：host app 刻意不進 sandbox，所以能用一般權限寫進去，而小工具讀自己的容器不需要任何 entitlement。同一次診斷中，讀自有容器成功、讀 App Group 失敗，這就是選它的依據。
+
+## 授權
+
+MIT — 見 [LICENSE](LICENSE)。
