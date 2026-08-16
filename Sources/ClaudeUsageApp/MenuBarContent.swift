@@ -161,7 +161,7 @@ struct MenuBarLabel: View {
     /// 「數值是不是 0」來分辨這兩種狀態，跟桌面 widget `RingGauge` 中心文字的
     /// `window.map { ... } ?? "—"` 是同一個分界。
     private var labelText: String {
-        "5h \(format(session)) · 7d \(format(weekly))"
+        "5h \(format(session)) · W \(format(weekly))"
     }
 
     private func format(_ window: SnapshotWindow?) -> String {
