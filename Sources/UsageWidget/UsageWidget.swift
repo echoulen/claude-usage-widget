@@ -54,7 +54,7 @@ struct UsageWidget: Widget {
                 .containerBackground(.fill.tertiary, for: .widget)
         }
         .configurationDisplayName("Claude 用量")
-        .description("顯示 5 小時與本週額度的剩餘比例。")
+        .description("顯示 5 小時與本週額度已使用的比例。")
         .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
