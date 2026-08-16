@@ -1,0 +1,12 @@
+.DS_Store
+*.xcodeproj
+*.xcworkspace
+!*.xcworkspace/contents.xcworkspacedata
+xcuserdata/
+DerivedData/
+.build/
+.swiftpm/
+build/
+
+# 開發過程文件：含機器路徑、個人與雇主識別資訊，不進版控
+docs/
