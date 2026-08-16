@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/echoulen/claude-usage-widget/main/i
 
 桌面按右鍵 →「編輯小工具」→ 搜尋 `claude` → 選 **ClaudeUsage**，把想要的尺寸拖到桌面。
 
-<img src="assets/widget-gallery.png" width="620" alt="小工具圖庫中的 ClaudeUsage，有小型與中型兩種尺寸">
+<img src="assets/widget-gallery.png" width="700" alt="小工具圖庫中的 ClaudeUsage，有小型與中型兩種尺寸">
 
 ## 畫面上看到什麼
 
