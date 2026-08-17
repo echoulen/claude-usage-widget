@@ -126,9 +126,11 @@ public struct UsageStore {
         )
 
         // `degraded` 代表 API 真的連續失敗超過寬限期，是唯一該說「打不通」的情況。
-        // session／weekly 為 nil 只可能來自 `makeWindow` 的「已過 resetsAt」分支
-        // （見其文件註解），跟 API 健不健康是兩件事：一個視窗剛重置、正等著下一次官方
-        // 讀數，不該被說成「API 暫時無法取得」——那是在 API 完全正常時說謊（defect 2）。
+        // session／weekly 為 nil 只可能來自 `makeWindow` 的兩種分支：「已過 resetsAt」，
+        // 或官方 API 這次直接把這個視窗回成 `null`（見其文件註解與 `UsageAPIClient.parse`）。
+        // 兩者跟 API 健不健康都是兩件事：不該被說成「API 暫時無法取得」——那是在 API
+        // 完全正常時說謊（defect 2）。兩個視窗都是 nil 時（例如剛好都回 `null`）同樣落在
+        // 這個分支，訊息一樣成立：沒有讀數就沒有讀數，不是打不通。
         let state: SnapshotState
         if degraded {
             state = .apiUnavailable
@@ -147,8 +149,12 @@ public struct UsageStore {
 
     /// 重置時間已過的視窗回傳 nil —— 舊百分比在重置後毫無意義，
     /// 寧可顯示「不知道」也不顯示可能是錯的數字。
+    ///
+    /// `latest == nil`（官方 API 這次把這個視窗回成 `null`）同樣回傳 nil，理由完全一樣：
+    /// 沒有讀數就沒有百分比可顯示，跟「已過 resetsAt」是同一種誠實的「不知道」，
+    /// 不是錯誤（見 `UsageAPIClient.parse` 的說明）。
     private func makeWindow(
-        latest: UsageWindow,
+        latest: UsageWindow?,
         previous: UsageWindow?,
         tokenDelta: Int,
         sampleTokenDelta: Int?,
@@ -156,6 +162,7 @@ public struct UsageStore {
         degraded: Bool,
         now: Date
     ) -> SnapshotWindow? {
+        guard let latest else { return nil }
         guard now < latest.resetsAt else { return nil }
 
         guard !degraded else {

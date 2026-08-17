@@ -131,7 +131,7 @@ final class UsageCoordinator {
     /// （最新一次 API 樣本的 session／weekly `resetsAt`）餵給那個純函式。
     /// 還沒有任何樣本時 `resetsAt` 是空陣列，函式會照原樣退回 flat interval。
     private func nextAPIPollDelay() -> TimeInterval {
-        let resetsAt = [latestSample?.usage.session.resetsAt, latestSample?.usage.weekly.resetsAt]
+        let resetsAt = [latestSample?.usage.session?.resetsAt, latestSample?.usage.weekly?.resetsAt]
             .compactMap { $0 }
         return UsageStore.nextAPIPollDelay(
             now: Date(),

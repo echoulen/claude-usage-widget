@@ -27,9 +27,11 @@ struct UsageAPIClientTests {
         let usage = try await makeClient(status: 200, body: body).fetch()
 
         // Fixtures/usage-api-response.json: five_hour.utilization = 38.2, seven_day.utilization = 61.0
-        #expect(usage.session.usedPercent == 38.2)
-        #expect(usage.weekly.usedPercent == 61.0)
-        #expect(usage.session.resetsAt == Date(timeIntervalSince1970: 1_786_810_199.604))
+        let session = try #require(usage.session)
+        let weekly = try #require(usage.weekly)
+        #expect(session.usedPercent == 38.2)
+        #expect(weekly.usedPercent == 61.0)
+        #expect(session.resetsAt == Date(timeIntervalSince1970: 1_786_810_199.604))
     }
 
     @Test("帶上 Authorization、anthropic-beta、User-Agent header")
@@ -69,10 +71,65 @@ struct UsageAPIClientTests {
         }
     }
 
-    @Test("欄位缺失時視為 schema 非預期，不猜測數值")
-    func unexpectedSchemaWhenFieldsMissing() async {
+    @Test("兩個視窗都缺席（如 {\"something_else\":1}）視為兩者皆 null，不拋錯")
+    func absentWindowsAreNilNotSchemaError() async throws {
+        let usage = try await makeClient(status: 200, body: #"{"something_else":1}"#).fetch()
+        #expect(usage.session == nil)
+        #expect(usage.weekly == nil)
+    }
+
+    @Test("整份 payload 無法解碼（非 JSON 物件）時視為 schema 非預期")
+    func unexpectedSchemaWhenPayloadUndecodable() async {
         await #expect(throws: UsageAPIError.unexpectedSchema) {
-            try await makeClient(status: 200, body: #"{"something_else":1}"#).fetch()
+            try await makeClient(status: 200, body: "not json").fetch()
+        }
+    }
+
+    @Test("five_hour 為 null、seven_day 有值時：解析成功、session 為 nil、weekly 有值，不拋錯")
+    func nullSessionWindowParsesAsNilWithoutThrowing() async throws {
+        let body = """
+        {
+            "five_hour": null,
+            "seven_day": {"utilization": 21.0, "resets_at": "2026-08-20T14:59:59.604356+00:00"}
+        }
+        """
+        let usage = try await makeClient(status: 200, body: body).fetch()
+        #expect(usage.session == nil)
+        let weekly = try #require(usage.weekly)
+        #expect(weekly.usedPercent == 21.0)
+    }
+
+    @Test("five_hour、seven_day 皆為 null 時：解析成功、兩者皆 nil，不拋錯")
+    func bothWindowsNullParseAsNilWithoutThrowing() async throws {
+        let body = #"{"five_hour": null, "seven_day": null}"#
+        let usage = try await makeClient(status: 200, body: body).fetch()
+        #expect(usage.session == nil)
+        #expect(usage.weekly == nil)
+    }
+
+    @Test("視窗存在但缺 utilization 時仍視為 schema 非預期")
+    func unexpectedSchemaWhenWindowMissingUtilization() async {
+        let body = """
+        {
+            "five_hour": {"resets_at": "2026-08-20T14:59:59.604356+00:00"},
+            "seven_day": null
+        }
+        """
+        await #expect(throws: UsageAPIError.unexpectedSchema) {
+            try await makeClient(status: 200, body: body).fetch()
+        }
+    }
+
+    @Test("視窗存在但 resets_at 無法解析時仍視為 schema 非預期")
+    func unexpectedSchemaWhenResetsAtUnparseable() async {
+        let body = """
+        {
+            "five_hour": {"utilization": 4.0, "resets_at": "not-a-date"},
+            "seven_day": null
+        }
+        """
+        await #expect(throws: UsageAPIError.unexpectedSchema) {
+            try await makeClient(status: 200, body: body).fetch()
         }
     }
 
@@ -92,8 +149,8 @@ struct UsageAPIClientTests {
         }
         """
         let usage = try await makeClient(status: 200, body: body).fetch()
-        #expect(usage.session.resetsAt == Date(timeIntervalSince1970: 1_786_810_199.604))
-        #expect(usage.weekly.resetsAt == Date(timeIntervalSince1970: 1_787_237_999.604))
+        #expect(usage.session?.resetsAt == Date(timeIntervalSince1970: 1_786_810_199.604))
+        #expect(usage.weekly?.resetsAt == Date(timeIntervalSince1970: 1_787_237_999.604))
     }
 
     @Test("errorDescription 為中文說明，且不是 Swift 給不出意義的預設訊息")

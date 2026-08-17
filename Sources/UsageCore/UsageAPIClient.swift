@@ -138,9 +138,16 @@ public struct UsageAPIClient: UsageAPI {
         let plain = ISO8601DateFormatter()
         plain.formatOptions = [.withInternetDateTime]
 
-        func window(_ raw: Payload.Window?) throws -> UsageWindow {
-            guard let raw,
-                  let resets = formatter.date(from: raw.resets_at) ?? plain.date(from: raw.resets_at)
+        // `raw == nil` 代表官方 API 把這個視窗回成 `null`——這是這支 API 的常態，
+        // 同一份回應裡 `seven_day_opus`／`tangelo`／`nimbus_quill`／`cinder_cove`／
+        // `amber_ladder` 等其他視窗也經常是 `null`，`five_hour` 在重置邊界附近同樣可能
+        // 短暫回成 `null`。這不是 schema 壞掉，回傳「這個視窗現在沒有讀數」（`nil`），
+        // 不拋錯。只有視窗**確實存在**卻缺 `utilization`（會讓上面的 `JSONDecoder.decode`
+        // 直接失敗，走到下面的 `try?` 分支）、或 `resets_at` 解不出來，才是真正的 schema
+        // 違反，繼續拋 `.unexpectedSchema`。
+        func window(_ raw: Payload.Window?) throws -> UsageWindow? {
+            guard let raw else { return nil }
+            guard let resets = formatter.date(from: raw.resets_at) ?? plain.date(from: raw.resets_at)
             else { throw UsageAPIError.unexpectedSchema }
             return UsageWindow(usedPercent: raw.utilization, resetsAt: resets)
         }
