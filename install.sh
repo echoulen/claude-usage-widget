@@ -294,13 +294,6 @@ signing_identity_exists() {
   security find-certificate -c "${SIGNING_CERT_NAME}" "${SIGNING_KEYCHAIN}" >/dev/null 2>&1
 }
 
-# 判斷目前的 openssl 是否支援 `-legacy`（只有 OpenSSL 3.x 才有）。系統內建的
-# /usr/bin/openssl 其實是 LibreSSL，沒有這個選項，但 LibreSSL 匯出的 PKCS12
-# 本來就是舊版格式，`security import` 讀得懂，不需要也不能加這些旗標。
-openssl_supports_legacy_pkcs12() {
-  openssl version 2>/dev/null | grep -q '^OpenSSL 3'
-}
-
 create_signing_identity() {
   command -v openssl >/dev/null 2>&1 \
     || die "找不到 openssl，無法建立簽章憑證。可加上 --no-signing-identity 跳過
@@ -313,33 +306,46 @@ create_signing_identity() {
 
   local tmp
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/claude-usage-cert.XXXXXX")" || die "建立暫存目錄失敗。"
-  local pw
-  pw="$(openssl rand -base64 18)"
 
-  openssl req -x509 -newkey rsa:2048 -keyout "${tmp}/key.pem" -out "${tmp}/cert.pem" -days 3650 -nodes \
-    -subj "/CN=${SIGNING_CERT_NAME}" \
-    -addext "extendedKeyUsage=critical,codeSigning" \
-    -addext "basicConstraints=critical,CA:false" \
-    -addext "keyUsage=critical,digitalSignature" \
+  local conf="${tmp}/cert.conf"
+  cat > "${conf}" <<EOF
+[req]
+prompt = no
+distinguished_name = dn
+x509_extensions = codesign
+
+[dn]
+CN = ${SIGNING_CERT_NAME}
+
+[codesign]
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+subjectKeyIdentifier = hash
+EOF
+
+  openssl genrsa -out "${tmp}/key.pem" 2048 \
+    >/dev/null 2>&1 || { rm -rf "${tmp}"; die "產生私鑰失敗（openssl genrsa）。"; }
+
+  openssl req -new -x509 -key "${tmp}/key.pem" -out "${tmp}/cert.pem" -days 3650 -config "${conf}" \
     >/dev/null 2>&1 || { rm -rf "${tmp}"; die "建立自簽憑證失敗（openssl req）。"; }
 
-  # OpenSSL 3.x 預設匯出的 PKCS12 用新版 MAC／加密演算法，macOS 的 `security import`
-  # 讀不懂，必須明確加上 `-legacy -macalg sha1`（搭配 PBE-SHA1-3DES）改用舊版演算法
-  # 才能被 Keychain 正確匯入；上面 openssl_supports_legacy_pkcs12 偵測到的 LibreSSL
-  # 沒有 `-legacy` 這個選項，但它匯出的 PKCS12 本來就是舊版格式，不需要這些旗標。
-  # 另外空密碼在 `security import` 會失敗，所以一定要用一組隨機產生的密碼。
-  # 這兩點都是踩過的坑，請不要「簡化」掉。
-  local -a legacy_args=()
-  if openssl_supports_legacy_pkcs12; then
-    legacy_args=(-legacy -macalg sha1 -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES)
-  fi
+  # 分別匯入私鑰與憑證這兩個 PEM 檔（而不是包成單一 PKCS12 容器），macOS 會
+  # 自動用公鑰把兩者配對起來，完全不需要處理 PKCS12 的加密格式相容性問題
+  # （OpenSSL 3.x 與 LibreSSL 對 PKCS12 的預設編碼不同，`security import` 只讀得懂
+  # 其中一種），也不需要為了滿足 `security import` 而生一組本來沒有意義的密碼。
+  #
+  # 這裡用 `-A` 而不是 `-T /usr/bin/codesign`：`-T` 只是把特定程式加進「信任清單」，
+  # 但自 macOS Sierra 起，實際存取私鑰還要看另一組 ACL 的 partition list，沒有它
+  # `codesign` 每次建置還是會跳出授權提示，而設定 partition list
+  # （`security set-key-partition-list`）需要輸入 login keychain 密碼，無法在
+  # 無人值守的腳本裡自動完成。`-A` 則是直接允許任何程式存取這把 key，不會再有
+  # per-use 提示，但代價是這不只開放給 codesign／security，是任何程式都能無提示
+  # 使用這把私鑰。對一張「只用來簽這個 app」的本機憑證來說，這個取捨可以接受，
+  # 但這裡誠實寫出來，不要包裝成單純比 `-T` 更好。
+  security import "${tmp}/key.pem" -k "${SIGNING_KEYCHAIN}" -A \
+    >/dev/null 2>&1 || { rm -rf "${tmp}"; die "匯入私鑰到 Keychain 失敗（security import）。"; }
 
-  openssl pkcs12 -export "${legacy_args[@]+"${legacy_args[@]}"}" \
-    -out "${tmp}/cert.p12" -inkey "${tmp}/key.pem" -in "${tmp}/cert.pem" -passout "pass:${pw}" \
-    >/dev/null 2>&1 || { rm -rf "${tmp}"; die "匯出 PKCS12 失敗（openssl pkcs12）。"; }
-
-  security import "${tmp}/cert.p12" -k "${SIGNING_KEYCHAIN}" \
-    -P "${pw}" -T /usr/bin/codesign -T /usr/bin/security \
+  security import "${tmp}/cert.pem" -k "${SIGNING_KEYCHAIN}" -A \
     >/dev/null 2>&1 || { rm -rf "${tmp}"; die "匯入憑證到 Keychain 失敗（security import）。"; }
 
   rm -rf "${tmp}"
