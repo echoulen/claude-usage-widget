@@ -103,3 +103,45 @@ public struct StubCredentialStore: CredentialStore {
         try result.get()
     }
 }
+
+/// 計數版測試替身：記錄 `load()` 被呼叫的次數，用來驗證
+/// `UsageAPIClient` 的憑證快取是否真的省下了 Keychain 讀取。
+///
+/// 另開一個型別而不是幫 `StubCredentialStore` 加這個副作用，是因為既有測試依賴
+/// 後者「單純回傳固定結果、無任何副作用」的行為，不能被計數邏輯污染。
+///
+/// `load()` 依協定是同步方法，可能被並發呼叫（`UsageAPIClient.fetch()` 的重試路徑
+/// 就是一例），因此用鎖而非 actor 保護內部狀態——actor 的隔離方法一律是 `async`，
+/// 無法滿足 `CredentialStore` 要求的同步簽章。
+public final class CountingCredentialStore: CredentialStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private let results: [Result<Credentials, CredentialError>]
+    private var index = 0
+    private var count = 0
+
+    /// 依序回傳 `results` 裡的每一筆；呼叫次數超過陣列長度時，重複回傳最後一筆——
+    /// 讓呼叫端不必為了「這輪測試只需要固定值」而特地把同一個結果重複填好幾次。
+    public init(results: [Result<Credentials, CredentialError>]) {
+        precondition(!results.isEmpty, "results 不可為空——沒有任何結果可回傳")
+        self.results = results
+    }
+
+    public convenience init(result: Result<Credentials, CredentialError>) {
+        self.init(results: [result])
+    }
+
+    public func load() throws -> Credentials {
+        lock.lock()
+        let result = results[min(index, results.count - 1)]
+        if index < results.count - 1 { index += 1 }
+        count += 1
+        lock.unlock()
+        return try result.get()
+    }
+
+    public var loadCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}
