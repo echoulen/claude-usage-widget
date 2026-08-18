@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 public struct Credentials: Equatable, Sendable {
     public let accessToken: String
@@ -38,29 +37,52 @@ public struct KeychainCredentialStore: CredentialStore {
         self.account = account ?? NSUserName()
     }
 
+    /// 透過 `/usr/bin/security` 讀取，而不是從本行程直接呼叫 `SecItemCopyMatching`。
+    ///
+    /// Keychain 的 ACL 記的是「哪個程式」可以讀某個項目。這個項目由 Claude Code 建立，
+    /// 而它看來是透過 `security` 命令列工具寫入的——於是 `/usr/bin/security` 一直是該
+    /// 項目 ACL 裡的信任程式，每次改寫後依然是。直接用 Security framework 呼叫時，提出
+    /// 請求的是本 app，它不在 ACL 裡，所以每次 token 更新（約 8 小時）清掉 ACL 之後，
+    /// 使用者就會再被要求授權一次。
+    ///
+    /// 實測：項目改寫兩小時後，`security find-generic-password -w` 仍可零延遲讀取、
+    /// 不跳任何對話框。同一個項目，本 app 直接讀則必定跳框。
+    ///
+    /// 代價要說清楚：這依賴「Claude Code 用 `security` 寫入」這個事實。哪天它改用
+    /// Security framework 直接寫，`/usr/bin/security` 就不會再自動落在 ACL 裡，我們
+    /// 會退回每 8 小時跳一次框——功能仍然正確，只是又變吵。
     public func load() throws -> Credentials {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", service, "-a", account, "-w"]
 
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        // 以 pipe 取回，不經過 shell：token 因此不會出現在任何指令列字串裡，
+        // 也就不會落入 shell 歷史或行程列表。
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
 
-        switch status {
-        case errSecSuccess:
-            guard let data = item as? Data else { throw CredentialError.malformed }
-            return try Self.decode(data)
-        case errSecItemNotFound:
-            throw CredentialError.notFound
-        case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:
-            throw CredentialError.denied
-        default:
+        do {
+            try process.run()
+        } catch {
             throw CredentialError.denied
         }
+
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            // `security` 找不到項目時回傳 44；其餘非零狀態一律當成被拒，
+            // 因為使用者按「拒絕」或授權失敗都走這條路。
+            throw process.terminationStatus == 44 ? CredentialError.notFound : CredentialError.denied
+        }
+
+        // `-w` 會在密碼後面附一個換行，JSON 解析前要修掉。
+        let trimmed = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw CredentialError.notFound }
+
+        return try Self.decode(Data(trimmed.utf8))
     }
 
     /// 解析 Keychain payload。
