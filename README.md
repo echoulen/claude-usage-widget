@@ -46,11 +46,7 @@ macOS 預設會把桌面小工具調暗成灰階。這是系統設定，不是 a
 
 ## 已知限制
 
-- **Keychain 授權對話框每約 8 小時會跳一次。** Claude Code 的 access token 大約 8 小時到期，
-  更新時會改寫它在 Keychain 裡的項目，而改寫會清掉該項目的存取控制清單（ACL）——包括你先前
-  按「永遠允許」給這個 app 的授權。實測時間軸：token 於 21:55:22 到期、Claude Code 於 21:59:36
-  改寫項目、幾秒後就跳出授權框。這不在本專案控制範圍內：那個項目屬於 Claude Code，ACL 也由它
-  掌控。一般 app 讀的是自己建立的項目，所以不會遇到這件事
+- 讀取 Claude Code 憑證時是透過 `/usr/bin/security` 而非直接呼叫 Security framework。這是刻意的：那個 Keychain 項目由 Claude Code 建立，`/usr/bin/security` 一直在它的存取控制清單裡，直接從 app 讀則會在每次 token 更新（約 8 小時）後要求重新授權。若 Claude Code 日後改變寫入方式，這個提示可能回來
 - 小工具尺寸由 WidgetKit 規定，只有那幾種，做不出貼齊 Dock 高度的窄長條
 
 ## 移除
