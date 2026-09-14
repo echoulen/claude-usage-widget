@@ -55,6 +55,39 @@ struct WidgetReloadPolicyTests {
         #expect(!decision.pendingForceReload)
     }
 
+    @Test("使用者手動重新整理：即使還在節流窗內也立刻 reload，不讓桌面小工具落後一分鐘")
+    func userInitiatedReloadBypassesThrottle() {
+        let decision = WidgetReloadPolicy.decide(
+            snapshot: snapshot(usedPercent: 20),
+            lastPushed: snapshot(usedPercent: 10),
+            forceReload: false,
+            pendingForceReload: false,
+            lastReload: Self.t0,
+            now: Self.t0.addingTimeInterval(5),
+            minimumInterval: 60,
+            userInitiated: true
+        )
+        #expect(decision.shouldReload)
+        #expect(!decision.pendingForceReload)
+    }
+
+    @Test("使用者手動重新整理但數值完全沒變：仍然不 reload，手動不等於無條件推播")
+    func userInitiatedDoesNotReloadWhenNothingChanged() {
+        let same = snapshot(usedPercent: 10)
+        let decision = WidgetReloadPolicy.decide(
+            snapshot: same,
+            lastPushed: same,
+            forceReload: false,
+            pendingForceReload: false,
+            lastReload: Self.t0,
+            now: Self.t0.addingTimeInterval(5),
+            minimumInterval: 60,
+            userInitiated: true
+        )
+        #expect(!decision.shouldReload)
+        #expect(!decision.pendingForceReload)
+    }
+
     @Test("forceReload 且未被節流：直接 reload，latch 清空")
     func forceReloadFiresImmediatelyWhenNotThrottled() {
         let same = snapshot(usedPercent: 10)

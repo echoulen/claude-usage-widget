@@ -42,6 +42,12 @@ public enum WidgetReloadPolicy {
     ///   - now: 目前時間，測試需要注入。
     ///   - minimumInterval: 兩次 reload 之間的下限——reload 預算有限，這條節流線本身
     ///     不能拿掉，defect 3 的修復只解決「意圖被節流擋下後就永遠消失」，不是拿掉節流。
+    ///   - userInitiated: 這一輪是不是使用者按「立即重新整理」帶出來的。為 `true` 時跳過
+    ///     `minimumInterval` 節流——節流是用來擋自動輪詢的高頻推播，而手動重新整理的頻率
+    ///     上限另有 `UsageCoordinator.manualRefreshDebounce`（30 秒）把關，再被節流擋一次
+    ///     只會讓使用者盯著沒反應的小工具，以為按鈕壞了。注意它**不**跳過「數值有沒有變」
+    ///     這道檢查：數字完全沒變還硬推一次 reload，對使用者沒有任何意義，只是白白花掉
+    ///     reload 預算。
     public static func decide(
         snapshot: UsageSnapshot,
         lastPushed: UsageSnapshot?,
@@ -49,7 +55,8 @@ public enum WidgetReloadPolicy {
         pendingForceReload: Bool,
         lastReload: Date?,
         now: Date,
-        minimumInterval: TimeInterval
+        minimumInterval: TimeInterval,
+        userInitiated: Bool = false
     ) -> Decision {
         let valuesChanged = !isEquivalent(snapshot, lastPushed)
         let wantsReload = valuesChanged || forceReload || pendingForceReload
@@ -58,7 +65,7 @@ public enum WidgetReloadPolicy {
             return Decision(shouldReload: false, pendingForceReload: false)
         }
 
-        if let lastReload, now.timeIntervalSince(lastReload) < minimumInterval {
+        if !userInitiated, let lastReload, now.timeIntervalSince(lastReload) < minimumInterval {
             // 被節流擋下。只有「強制」成分（這一輪新出現的 forceReload，或上一輪就已經在
             // 等的 pendingForceReload）需要 latch 住繼續等下一輪——單純的數值變動不需要，
             // 見上方型別文件註解。

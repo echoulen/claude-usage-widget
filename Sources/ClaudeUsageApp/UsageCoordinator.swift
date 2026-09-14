@@ -157,7 +157,7 @@ final class UsageCoordinator {
             return
         }
         lastManualRefresh = now
-        Task { await refreshFromAPI(reloadingCredentials: true) }
+        Task { await refreshFromAPI(reloadingCredentials: true, userInitiated: true) }
     }
 
     private func scanLocal() async {
@@ -217,7 +217,7 @@ final class UsageCoordinator {
     }
 
     /// `reloadingCredentials` 只有手動重新整理會帶 `true`，見 `UsageAPI.fetch(reloadingCredentials:)`。
-    private func refreshFromAPI(reloadingCredentials: Bool = false) async {
+    private func refreshFromAPI(reloadingCredentials: Bool = false, userInitiated: Bool = false) async {
         do {
             // `UsageAPIClient.fetch()` 內部先呼叫 `SecItemCopyMatching`（Keychain，同步、
             // 可能因授權對話框耗時數秒）才發網路請求；兩者都不能直接留在 MainActor 上跑，
@@ -247,7 +247,7 @@ final class UsageCoordinator {
                 lastAPIFailureReason = .service
             }
         }
-        await publish()
+        await publish(userInitiated: userInitiated)
     }
 
     /// API 失敗的分類：只用來讓選單列在 `.signedOut` 狀態下挑對訊息，
@@ -267,7 +267,10 @@ final class UsageCoordinator {
         ).totalTokens
     }
 
-    private func publish() async {
+    /// `userInitiated`：這一輪 publish 是不是使用者按「立即重新整理」帶出來的。只往下傳給
+    /// `WidgetBridge`，讓桌面小工具跳過那 60 秒的 reload 節流——見
+    /// `WidgetReloadPolicy.decide` 的 `userInitiated` 參數說明。
+    private func publish(userInitiated: Bool = false) async {
         let new: UsageSnapshot
         if transcriptRootAccessible {
             new = store.makeSnapshot(
@@ -306,7 +309,7 @@ final class UsageCoordinator {
         // 若不繞過數值比較就會被判定「沒變動」而不推播，widget 因此空等自己最長 15
         // 分鐘的 timeline 排程才會顯示第一份資料。理由詳見 `WidgetBridge.pushIfNeeded`。
         let justRecovered = Self.isFailingDelivery(previousDeliveryStatus) && snapshotDeliveryStatus == .ok
-        bridge.pushIfNeeded(new, forceReload: justRecovered)
+        bridge.pushIfNeeded(new, forceReload: justRecovered, userInitiated: userInitiated)
     }
 
     private static func isFailingDelivery(_ status: SnapshotDeliveryStatus) -> Bool {

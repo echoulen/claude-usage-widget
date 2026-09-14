@@ -33,7 +33,12 @@ final class WidgetBridge {
     /// 記在 `lastPushed` 的那份）一模一樣，若不繞過數值比較，就會照舊被判定「沒變動」而
     /// 不推播。若這次剛好又被 `minimumInterval` 節流擋下，`pendingForceReload` 會記住這個
     /// 意圖並在下一輪重試，不會像單純「傳一次 forceReload」那樣被節流永久吞掉。
-    func pushIfNeeded(_ snapshot: UsageSnapshot, forceReload: Bool = false, now: Date = Date()) {
+    func pushIfNeeded(
+        _ snapshot: UsageSnapshot,
+        forceReload: Bool = false,
+        userInitiated: Bool = false,
+        now: Date = Date()
+    ) {
         let decision = WidgetReloadPolicy.decide(
             snapshot: snapshot,
             lastPushed: lastPushed,
@@ -41,7 +46,8 @@ final class WidgetBridge {
             pendingForceReload: pendingForceReload,
             lastReload: lastReload,
             now: now,
-            minimumInterval: minimumInterval
+            minimumInterval: minimumInterval,
+            userInitiated: userInitiated
         )
         pendingForceReload = decision.pendingForceReload
         guard decision.shouldReload else { return }
