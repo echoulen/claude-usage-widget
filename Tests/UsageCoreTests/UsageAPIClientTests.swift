@@ -291,6 +291,24 @@ struct UsageAPIClientTests {
         #expect(store.loadCount == 2)
     }
 
+    @Test("reloadingCredentials：快取仍有效也重讀 Keychain，並改用新 token（例如直接重新登入換了帳號）")
+    func reloadingCredentialsBypassesValidCache() async throws {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        let store = CountingCredentialStore(results: [
+            .success(Credentials(accessToken: "account-a", expiresAt: t0.addingTimeInterval(8 * 3600))),
+            .success(Credentials(accessToken: "account-b", expiresAt: t0.addingTimeInterval(8 * 3600))),
+        ])
+        let transport = StubTransport(status: 200, body: Data("{}".utf8))
+        let client = UsageAPIClient(credentialStore: store, transport: transport, now: { t0 })
+
+        _ = try await client.fetch()
+        _ = try await client.fetch(reloadingCredentials: true)
+
+        #expect(store.loadCount == 2)
+        let authorization = await transport.lastRequest?.value(forHTTPHeaderField: "Authorization")
+        #expect(authorization == "Bearer account-b")
+    }
+
     @Test("快取的憑證被 401 拒絕：丟棄快取、重讀一次後成功")
     func retriesOnceAfter401WithCachedCredentialThenSucceeds() async throws {
         let t0 = Date(timeIntervalSince1970: 1_000_000)

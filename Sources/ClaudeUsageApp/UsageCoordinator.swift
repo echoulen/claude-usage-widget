@@ -157,7 +157,7 @@ final class UsageCoordinator {
             return
         }
         lastManualRefresh = now
-        Task { await refreshFromAPI() }
+        Task { await refreshFromAPI(reloadingCredentials: true) }
     }
 
     private func scanLocal() async {
@@ -216,7 +216,8 @@ final class UsageCoordinator {
         return FileManager.default.isReadableFile(atPath: transcriptRoot.path)
     }
 
-    private func refreshFromAPI() async {
+    /// `reloadingCredentials` 只有手動重新整理會帶 `true`，見 `UsageAPI.fetch(reloadingCredentials:)`。
+    private func refreshFromAPI(reloadingCredentials: Bool = false) async {
         do {
             // `UsageAPIClient.fetch()` 內部先呼叫 `SecItemCopyMatching`（Keychain，同步、
             // 可能因授權對話框耗時數秒）才發網路請求；兩者都不能直接留在 MainActor 上跑，
@@ -224,7 +225,7 @@ final class UsageCoordinator {
             // 只有 Sendable 的 `api`（`UsageAPI: Sendable`）跨界，結果 hop 回來才寫入狀態。
             let capturedAPI = api
             let usage = try await Task.detached(priority: .utility) {
-                try await capturedAPI.fetch()
+                try await capturedAPI.fetch(reloadingCredentials: reloadingCredentials)
             }.value
             previousSample = latestSample
             latestSample = APISample(usage: usage, localTokensAtFetch: currentLocalTokens())

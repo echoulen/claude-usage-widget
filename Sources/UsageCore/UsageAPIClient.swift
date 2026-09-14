@@ -67,7 +67,16 @@ extension UsageAPIError: LocalizedError {
 }
 
 public protocol UsageAPI: Sendable {
-    func fetch() async throws -> OfficialUsage
+    /// - Parameter reloadingCredentials: 為 `true` 時無視快取、先重讀 Keychain。
+    ///   給使用者手動重新整理用：直接重新登入換帳號時，舊 token 沒被撤銷、仍回 200，
+    ///   快取不會因 401 失效，只有明確要求重讀才會換成新帳號。
+    func fetch(reloadingCredentials: Bool) async throws -> OfficialUsage
+}
+
+extension UsageAPI {
+    public func fetch() async throws -> OfficialUsage {
+        try await fetch(reloadingCredentials: false)
+    }
 }
 
 /// `UsageAPIClient` 的記憶體憑證快取。
@@ -129,7 +138,10 @@ public struct UsageAPIClient: UsageAPI {
         self.now = now
     }
 
-    public func fetch() async throws -> OfficialUsage {
+    public func fetch(reloadingCredentials: Bool) async throws -> OfficialUsage {
+        if reloadingCredentials {
+            await cache.invalidate()
+        }
         let credentials = try await loadCredentials()
         do {
             return try await performRequest(with: credentials)
