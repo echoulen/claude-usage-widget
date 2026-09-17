@@ -109,16 +109,14 @@ struct MenuBarContent: View {
             "但兩次讀數之間暫時不提供本機推估。"
     }
 
-    /// snapshot.json 是否成功送到 widget 容器；兩種失敗形態訊息不同（見
-    /// `SnapshotDeliveryStatus`），都必須讓使用者看得到，不能悄悄失敗。
+    /// snapshot.json 是否成功寫入（見 `SnapshotDeliveryStatus`）；失敗必須讓使用者看得到，
+    /// 不能悄悄失敗。
     private var deliveryMessage: String? {
         switch coordinator.snapshotDeliveryStatus {
         case .ok:
             return nil
-        case .widgetContainerMissing:
-            return "尚未偵測到桌面 widget。請先把「Claude 用量」widget 加到桌面或通知中心一次，之後會自動同步。"
         case .writeDenied(let message):
-            return "無法寫入 widget 資料（\(message)）。請至 系統設定 → 隱私權與安全性 檢查是否封鎖了本 App 對其他 App 資料的存取。"
+            return "無法寫入 widget 資料（\(message)）。"
         }
     }
 

@@ -27,9 +27,9 @@ final class WidgetBridge {
     /// 一般情況只在數值實際變動且距上次推送夠久時才觸發（節流器，理由見 initializer）。
     ///
     /// `forceReload` 用來蓋掉「數值變動」這一條檢查——但**不**蓋掉 `minimumInterval` 節流，
-    /// reload 預算依然有限。目前唯一的呼叫端是 defect 3：snapshot 遞送狀態剛從失敗
-    /// （`.widgetContainerMissing` / `.writeDenied`）轉為 `.ok` 的那一刻，此時桌面 widget
-    /// 的容器可能才第一次真的寫得進去，但這一輪算出來的用量數字很可能跟上一輪（寫入失敗前
+    /// reload 預算依然有限。目前唯一的呼叫端是 defect 3：snapshot 遞送狀態剛從
+    /// `.writeDenied` 轉為 `.ok` 的那一刻，檔案才第一次真的寫得進去，但這一輪算出來的
+    /// 用量數字很可能跟上一輪（寫入失敗前
     /// 記在 `lastPushed` 的那份）一模一樣，若不繞過數值比較，就會照舊被判定「沒變動」而
     /// 不推播。若這次剛好又被 `minimumInterval` 節流擋下，`pendingForceReload` 會記住這個
     /// 意圖並在下一輪重試，不會像單純「傳一次 forceReload」那樣被節流永久吞掉。

@@ -2,16 +2,11 @@ import Foundation
 import Observation
 import UsageCore
 
-/// snapshot.json 的寫入結果，用來在選單列上區分兩種完全不同的失敗形態：
-/// widget 容器還不存在（正常的「尚未安裝」狀態）vs. 系統拒絕寫入（多半是 TCC 權限問題）。
-/// 兩者都不可以讓使用者誤以為「app 正常運作、只是沒有資料」。
+/// snapshot.json 的寫入結果。寫入失敗一定要讓使用者在選單列上看到，不能讓人誤以為
+/// 「app 正常運作、只是 widget 沒有資料」。
 enum SnapshotDeliveryStatus: Equatable, Sendable {
     case ok
-    /// `SnapshotLocation.fromHostApp()` 回傳 nil —— widget 從未執行過，容器根目錄不存在。
-    /// 這是預期中的正常狀態（例如剛安裝好），不是錯誤，下一輪會自動重試。
-    case widgetContainerMissing
-    /// 寫入呼叫本身丟出錯誤 —— 最常見的原因是 macOS TCC「App Data」保護擋下對其他
-    /// App 容器的寫入。這一定要讓使用者看到，不能悄悄吞掉。
+    /// 共享目錄建立失敗，或寫入呼叫本身丟出錯誤。
     case writeDenied(String)
 }
 
@@ -22,7 +17,7 @@ final class UsageCoordinator {
     private(set) var snapshot: UsageSnapshot?
     private(set) var lastError: String?
     private(set) var lastAPIFailureReason: APIFailureReason?
-    private(set) var snapshotDeliveryStatus: SnapshotDeliveryStatus = .widgetContainerMissing
+    private(set) var snapshotDeliveryStatus: SnapshotDeliveryStatus = .ok
 
     private let transcriptRoot: URL
     private let api: UsageAPI
@@ -37,7 +32,7 @@ final class UsageCoordinator {
     private var apiFailureSince: Date?
     /// 上一次「實際成功寫入磁碟」的 snapshot；`nil` 代表啟動後還沒有任何一次成功寫入的
     /// 記憶（含真的第一次、或先前的嘗試全部失敗／被跳過）。只在 `writeSnapshot` 真正
-    /// 寫入成功時更新——寫入失敗或容器還不存在都不能碰它，否則下一輪會誤判成「內容
+    /// 寫入成功時更新——寫入失敗時不能碰它，否則下一輪會誤判成「內容
     /// 沒變」而永遠跳過重試。`SnapshotWritePolicy.shouldWrite` 拿它跟這一輪算出來的
     /// snapshot 比較（排除 `updatedAt`），決定要不要真的動筆——見該型別的文件註解。
     private var lastWrittenSnapshot: UsageSnapshot?
@@ -106,7 +101,7 @@ final class UsageCoordinator {
                 try? await Task.sleep(for: Self.scanInterval)
                 // `Task.sleep` 被取消時會立刻回傳（`try?` 吞掉 `CancellationError`），
                 // 若不在這裡再檢查一次就直接往下做 scanLocal()，`stop()` 之後仍會跑完
-                // 一整輪掃描＋persistCursor＋publish（含寫 widget 容器），拖慢
+                // 一整輪掃描＋persistCursor＋publish（含寫 snapshot.json），拖慢
                 // `applicationWillTerminate`。sleep 醒來後、真正動手前必須再確認一次。
                 guard !Task.isCancelled else { break }
                 await self?.scanLocal()
@@ -303,9 +298,8 @@ final class UsageCoordinator {
 
         let previousDeliveryStatus = snapshotDeliveryStatus
         await writeSnapshot(new)
-        // defect 3：遞送狀態剛從失敗（widget 容器還不存在／寫入被拒）轉為成功時，
-        // 強制推播一次、不受「數值沒變」節流——這正是「剛把 widget 拖上桌面」那一刻：
-        // 容器第一次寫得進去，但這一輪數字很可能跟上一輪（寫入失敗前記住的那份）一樣，
+        // defect 3：遞送狀態剛從寫入失敗轉為成功時，強制推播一次、不受「數值沒變」
+        // 節流——檔案終於寫得進去，但這一輪數字很可能跟上一輪（寫入失敗前記住的那份）一樣，
         // 若不繞過數值比較就會被判定「沒變動」而不推播，widget 因此空等自己最長 15
         // 分鐘的 timeline 排程才會顯示第一份資料。理由詳見 `WidgetBridge.pushIfNeeded`。
         let justRecovered = Self.isFailingDelivery(previousDeliveryStatus) && snapshotDeliveryStatus == .ok
@@ -315,18 +309,16 @@ final class UsageCoordinator {
     private static func isFailingDelivery(_ status: SnapshotDeliveryStatus) -> Bool {
         switch status {
         case .ok: return false
-        case .widgetContainerMissing, .writeDenied: return true
+        case .writeDenied: return true
         }
     }
 
-    /// 寫入目的地是 widget 自己的 sandbox container（`SnapshotLocation.fromHostApp()`），
-    /// 不是 App Group（design doc §3.1）。容器根目錄要等 widget 至少執行過一次才存在，
-    /// 尚不存在時回傳 nil 屬預期狀態，跳過這輪寫入、留給下一輪重試，不當成錯誤處理——
-    /// 但仍要透過 `snapshotDeliveryStatus` 讓使用者在選單列上看到「為什麼還沒同步」，
-    /// 跟「容器存在但寫入被拒」清楚分開，不能兩者都顯示成同一種沉默的無資料狀態。
+    /// 寫入目的地見 `SnapshotLocation`：host app 自己的 Application Support 目錄，widget
+    /// 以唯讀 entitlement 讀取。失敗時透過 `snapshotDeliveryStatus` 讓使用者在選單列上看到，
+    /// 不能變成沉默的無資料狀態。
     private func writeSnapshot(_ snapshot: UsageSnapshot) async {
         // 內容跟上次成功寫入的那份等價（`updatedAt` 以外全部欄位都相同，見
-        // `SnapshotWritePolicy` 的文件註解）——不必再多寫一次跨 sandbox 邊界的檔案。
+        // `SnapshotWritePolicy` 的文件註解）——不必再多寫一次。
         // `snapshotDeliveryStatus` 刻意維持原樣：它反映的是「上一次真正嘗試寫入」的
         // 結果，這一輪根本沒有嘗試，沒有新資訊可以覆寫過去的結果——既不能被誤讀成
         // 「這一輪也成功了」，也不能被誤判成失敗、變舊。
@@ -334,29 +326,25 @@ final class UsageCoordinator {
             return
         }
 
-        // 實測發現：跨 sandbox 邊界第一次寫入另一個 App 的 container 時，
-        // macOS 的 TCC「App 資料」保護會做一次同步查核，耗時可達 3 秒
-        // （見 task-10-report.md 的量測）——這跟掃描一樣會直接凍結選單列，
-        // 因此整段也丟到 detached task，只有 Sendable 的 UsageSnapshot 進去、
-        // SnapshotDeliveryStatus 出來，結果 hop 回 MainActor 才寫入可觀察狀態。
+        // 檔案 I/O 跟掃描一樣不留在 MainActor 上，避免卡住選單列：只有 Sendable 的
+        // UsageSnapshot 進去、SnapshotDeliveryStatus 出來，結果 hop 回 MainActor 才寫入
+        // 可觀察狀態。
         let status = await Task.detached(priority: .utility) { () -> SnapshotDeliveryStatus in
             guard let url = SnapshotLocation.fromHostApp() else {
-                return .widgetContainerMissing
+                return .writeDenied("無法建立 \(SnapshotLocation.homeRelativeDirectory)")
             }
             do {
                 try SnapshotFile(url: url).write(snapshot)
                 return .ok
             } catch {
-                // 最可能的原因：系統設定 → 隱私權與安全性 底下的「App 資料」保護
-                // 擋下了對 widget 容器的寫入（TCC）。這裡只留下訊息本身，
-                // 不含任何憑證或 token 內容。
+                // 只留下錯誤訊息本身，不含任何憑證或 token 內容。
                 return .writeDenied(error.localizedDescription)
             }
         }.value
         snapshotDeliveryStatus = status
         if status == .ok {
-            // 只有真正寫進磁碟成功，才能更新「上次寫了什麼」的記憶——寫入失敗或容器
-            // 還不存在都不能記成「已寫入」，否則下一輪會誤判成「內容沒變」而永遠跳過
+            // 只有真正寫進磁碟成功，才能更新「上次寫了什麼」的記憶——寫入失敗不能記成
+            // 「已寫入」，否則下一輪會誤判成「內容沒變」而永遠跳過
             // 重試（見 `lastWrittenSnapshot` 的文件註解）。
             lastWrittenSnapshot = snapshot
         }
@@ -368,8 +356,7 @@ final class UsageCoordinator {
     }
 
     /// 跨啟動持久化 cursor，避免每次重啟都要重新啃過上千個 jsonl（spec §7.4）。
-    /// 存在 host app 自己的 Application Support 目錄，跟 widget 容器無關——host app
-    /// 從第一次啟動就一定能寫，不需要等 widget 先跑過一次。
+    /// 跟 snapshot.json 放在同一個 Application Support 目錄。
     private func persistCursor() {
         do {
             try FileManager.default.createDirectory(

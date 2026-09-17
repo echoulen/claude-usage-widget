@@ -41,8 +41,7 @@ struct UsageProvider: TimelineProvider {
     /// 讀端必須自己再把「視窗是否已過 resetsAt」「距離上次寫入是否太久」查一次，
     /// 不能只信任寫入當下已經做過的判斷。
     private func readSnapshot(now: Date) -> UsageSnapshot? {
-        guard let url = SnapshotLocation.fromInsideWidget() else { return nil }
-        guard let snapshot = try? SnapshotFile(url: url).read() else { return nil }
+        guard let snapshot = try? SnapshotFile(url: SnapshotLocation.fromInsideWidget()).read() else { return nil }
         return SnapshotPresenter().present(snapshot, now: now)
     }
 }

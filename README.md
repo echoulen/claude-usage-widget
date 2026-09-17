@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/echoulen/claude-usage-widget/main/i
 
 在既有的 clone 內則是 `./install.sh --uninstall`。
 
-會移除 app 與 LaunchAgent；小工具的資料容器與本機簽章憑證**不會**自動刪除，腳本會印出位置讓你自行決定。
+會移除 app 與 LaunchAgent；app 資料目錄與本機簽章憑證**不會**自動刪除，腳本會印出位置讓你自行決定。
 
 ## 授權
 

@@ -21,9 +21,8 @@ REPO_URL="https://github.com/echoulen/claude-usage-widget.git"
 REPO_RAW_INSTALL_URL="https://raw.githubusercontent.com/echoulen/claude-usage-widget/main/install.sh"
 LAUNCH_AGENT_LABEL="${BUNDLE_ID}"
 LAUNCH_AGENT_PLIST="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
-# 資料不走 App Group（在 ad-hoc 簽章下已證實不可行，見 docs/superpowers/specs/2026-08-14-claude-usage-widget-design.md §3.1）。
-# host app 是把 snapshot.json 直接寫進 widget 自己的 sandbox container。
-WIDGET_CONTAINER="${HOME}/Library/Containers/${WIDGET_BUNDLE_ID}"
+# host app 寫 snapshot.json 與掃描游標的位置；widget 以唯讀 entitlement 讀取同一個目錄。
+DATA_DIR="${HOME}/Library/Application Support/${APP_NAME}"
 DERIVED_DATA_ROOT="${HOME}/Library/Developer/Xcode/DerivedData"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
@@ -80,7 +79,7 @@ install.sh — 從原始碼建置並安裝 ${APP_DISPLAY_NAME}
                           （每次重新建置都要重新授權 Keychain／個人資料夾等
                           權限；見下方「本機簽章憑證」說明）
   --uninstall             移除 app、LaunchAgent（若有），並印出
-                          widget 容器路徑（不會刪除，由你自行決定）
+                          app 資料目錄（不會刪除，由你自行決定）
   -h, --help              顯示這個說明
 
 需求：
@@ -489,8 +488,11 @@ install_app() {
   # 有兩份註冊互相競爭，實測 pluginkit 會挑中建置輸出那份，於是小工具圖庫顯示的
   # icon 與說明來自 build/ 而非 /Applications，看起來就像「圖示一直沒更新」。
   # 安裝完成後主動取消註冊並移除建置輸出，讓系統只認得 /Applications 那一份。
+  # 只取消註冊不夠：檔案還在，系統之後重新掃描（例如升級 macOS）就會再認回來。
+  # 整個 build/ 一起刪——Products 底下還有一份獨立的 UsageWidget.appex，同樣會被註冊。
   if [[ -n "${BUILT_APP:-}" && -e "${BUILT_APP}" ]]; then
     "${LSREGISTER}" -u "${BUILT_APP}" >/dev/null 2>&1 || true
+    rm -rf "${SRC_DIR}/build"
   fi
   "${LSREGISTER}" -f "${TARGET_APP}" >/dev/null 2>&1 || true
 }
@@ -584,12 +586,11 @@ do_uninstall() {
     info "沒有找到 LaunchAgent，略過。"
   fi
 
-  if [[ -d "${WIDGET_CONTAINER}" ]]; then
-    info "Widget 資料仍保留在：${WIDGET_CONTAINER}"
-    info "（不會自動刪除，是否移除請自行決定。實際的 snapshot.json 位於"
-    info "${WIDGET_CONTAINER}/Data/Library/Application Support/ 底下。）"
+  if [[ -d "${DATA_DIR}" ]]; then
+    info "App 資料（snapshot.json、掃描游標）仍保留在：${DATA_DIR}"
+    info "（不會自動刪除，是否移除請自行決定。）"
   else
-    info "找不到 widget 容器目錄（${WIDGET_CONTAINER}），可能從未執行過。"
+    info "找不到 app 資料目錄（${DATA_DIR}），可能從未執行過。"
   fi
 
   if signing_identity_exists; then

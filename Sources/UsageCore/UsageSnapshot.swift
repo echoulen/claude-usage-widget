@@ -86,62 +86,43 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
 
 /// Host app 與 widget 之間共享 `snapshot.json` 的位置解析。
 ///
-/// **這裡的不對稱是刻意的，也是整個資料通道能運作的關鍵：**
-/// widget 與 host app 用完全不同的方式算出同一個目錄。App Group 在 ad-hoc 簽章、
-/// 無付費 Apple Developer team 的情況下被證實不可行（sandboxed widget 對 App Group
-/// container 的讀、列、寫全部被拒絕，見 design doc §3.1）。改用的通道是 widget
-/// **自己的** sandbox container——非 sandbox 的 host app 可以用一般使用者權限直接
-/// 寫進這個目錄，不需要任何 entitlement 或 provisioning profile。
+/// 位置是使用者家目錄底下的 `Library/Application Support/ClaudeUsage/snapshot.json`，
+/// 跟 host app 的掃描游標放在同一個目錄。
+///
+/// 為什麼不再寫進 widget 自己的 sandbox container：macOS 27 起，非 sandbox 的 host app
+/// 寫進其他 App 容器會被 System Policy 直接擋下（`deny(1) file-write-create`，不跳授權
+/// 視窗）。App Group 在自簽章、無 Apple Developer team 的情況下也不可行（design doc §3.1）。
+/// 改成 host app 寫自己的目錄，widget 透過 entitlement
+/// `com.apple.security.temporary-exception.files.home-relative-path.read-only` 唯讀存取。
 public enum SnapshotLocation {
-    /// Widget extension 的 bundle identifier。容器路徑由它決定，兩者必須保持同步。
-    public static let widgetBundleID = "io.echoulen.ClaudeUsage.Widget"
+    /// 相對於使用者家目錄的共享目錄。widget entitlement 裡的例外路徑必須跟它一致。
+    public static let homeRelativeDirectory = "Library/Application Support/ClaudeUsage"
 
-    /// 由 **widget 自己** 呼叫：sandbox 內 `applicationSupportDirectory` 已經指向
-    /// widget 自有的容器，系統自動重導向，不需要拼路徑。
+    /// 由 **widget** 呼叫。sandbox 內 `homeDirectoryForCurrentUser` 會被重導向到容器，
+    /// 所以真正的家目錄要從 passwd 查。
     ///
-    /// - Parameter applicationSupportURL: 供測試注入假路徑；production 呼叫端一律省略，
-    ///   使用系統真正的 `applicationSupportDirectory`。
-    public static func fromInsideWidget(
-        applicationSupportURL: URL? = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first
-    ) -> URL? {
-        applicationSupportURL?.appendingPathComponent("snapshot.json")
+    /// - Parameter homeURL: 供測試注入假路徑。
+    public static func fromInsideWidget(homeURL: URL = realHomeDirectory()) -> URL {
+        homeURL.appendingPathComponent(homeRelativeDirectory).appendingPathComponent("snapshot.json")
     }
 
-    /// 由 **host app** 呼叫：host app 不在 sandbox 內，必須明確組出 widget 容器的路徑，
-    /// 也就是 `~/Library/Containers/<widgetBundleID>/Data/Library/Application Support/snapshot.json`。
+    /// 由 **host app** 呼叫：必要時建立共享目錄。建立失敗時回傳 nil。
     ///
-    /// 容器根目錄（`~/Library/Containers/<widgetBundleID>/`）只在 widget **至少執行過一次**
-    /// 後才會由系統建立。若這個根目錄還不存在，代表 widget 從未執行過（例如剛裝好、
-    /// 使用者尚未把 widget 加到桌面），此時回傳 nil，呼叫端應該在下一個週期重試，
-    /// **絕不能自己 mkdir 出這個根目錄**——手動生出來的容器根目錄不會被系統的
-    /// container manager 承認，可能造成後續狀態混亂。只有在根目錄已存在的前提下，
-    /// 才建立更深一層的中介目錄（`Data/Library/Application Support`）。
-    ///
-    /// - Parameter containersRootURL: 供測試注入假的 `~/Library/Containers` 路徑；
-    ///   production 呼叫端一律省略，使用目前使用者真正的家目錄。
-    public static func fromHostApp(
-        containersRootURL: URL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Containers")
-    ) -> URL? {
-        let containerRoot = containersRootURL.appendingPathComponent(widgetBundleID)
-
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: containerRoot.path, isDirectory: &isDirectory),
-              isDirectory.boolValue
-        else {
-            return nil
-        }
-
-        let appSupportDir = containerRoot
-            .appendingPathComponent("Data/Library/Application Support")
+    /// - Parameter homeURL: 供測試注入假路徑。
+    public static func fromHostApp(homeURL: URL = realHomeDirectory()) -> URL? {
+        let directory = homeURL.appendingPathComponent(homeRelativeDirectory)
         guard (try? FileManager.default.createDirectory(
-            at: appSupportDir, withIntermediateDirectories: true
+            at: directory, withIntermediateDirectories: true
         )) != nil else {
             return nil
         }
+        return directory.appendingPathComponent("snapshot.json")
+    }
 
-        return appSupportDir.appendingPathComponent("snapshot.json")
+    public static func realHomeDirectory() -> URL {
+        guard let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir else {
+            return FileManager.default.homeDirectoryForCurrentUser
+        }
+        return URL(fileURLWithPath: String(cString: dir), isDirectory: true)
     }
 }
